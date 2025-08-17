@@ -17,6 +17,8 @@ available_functions = types.Tool(
 )
 
 
+MAX_ITERATIONS = 20
+
 system_prompt = """
 You are a helpful AI coding agent.
 
@@ -48,33 +50,46 @@ def main():
 
     prompt = sys.argv[1]
 
+    if verbose:
+        print(f"User prompt: {prompt}")
+
     messages = [
         types.Content(role="user", parts=[types.Part(text=prompt)]),
     ]
     
-    response = client.models.generate_content(
-        model="gemini-2.0-flash-001",
-        contents=messages,
-        config=types.GenerateContentConfig(
-            tools=[available_functions], system_instruction=system_prompt
-        )
-    )
-
-    if verbose:
-        print(f"User prompt: {prompt}")
-    
-
-    if response.function_calls:
-        for function_call in response.function_calls:
-            function_call_result = call_function(function_call, verbose)
-            if not function_call_result.parts[0].function_response.response:
-                raise Exception(
-                    f"Function call {function_call.name} did not return a response."
+    try:
+        for iterations in range(MAX_ITERATIONS):
+            response = client.models.generate_content(
+                model="gemini-2.0-flash-001",
+                contents=messages,
+                config=types.GenerateContentConfig(
+                    tools=[available_functions], system_instruction=system_prompt
                 )
-            if verbose:
-                print(f"-> {function_call_result.parts[0].function_response.response}")       
-    else:
-        print(response.text)
+            )
+            for candidate in response.candidates:
+                messages.append(candidate.content)
+            
+
+            if response.function_calls:
+                for function_call in response.function_calls:
+                    function_call_result = call_function(function_call, verbose)
+                    function_response = function_call_result.parts[0].function_response.response
+                    if not function_response:
+                        raise Exception(
+                            f"Function call {function_call.name} did not return a response."
+                        )
+                    if verbose:
+                        print(f"-> {function_response}")
+                    
+                    new_message = types.Content(role="user", parts=[types.Part(text=str(function_response))])
+                    messages.append(new_message)
+            elif response.text:
+                print("Final response:")
+                print(response.text)
+                break
+    except Exception as e:
+        print(f"Error during processing: {str(e)}")
+        sys.exit(1)
     
     if verbose:
         print(f"Prompt tokens: {response.usage_metadata.prompt_token_count}")
